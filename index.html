@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <link href="vendor/leaflet/leaflet.css" rel="stylesheet" type="text/css" />
+    <link href="css/JavaScriptExamples.css" rel="stylesheet" type="text/css" />
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</head>
+
+<body>
+
+<div class="container">
+    <div id="example-content" >
+        <div style="display:flex;">
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+        </div>
+    </div>
+
+
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mg-api-js"></script>
+
+<script type="text/javascript">
+
+    document.addEventListener("DOMContentLoaded", function () {
+
+        let routeId = '[ROUTEID]'
+        let busId = '[BUSID]'
+
+        let app = initApp(initGeotabApi, initLeafletMapFunctions)
+
+        app.launch(routeId, busId)
+
+
+        function initApp(initApi, initMapFunctions) {
+            let api = initApi()
+            let {displayRoute, displayBus} = initMapFunctions()
+
+            function launch(routeId, busId) {
+                getRouteMetaInfoAsync(routeId, api).then(
+                    routeMetaInfo => {
+                        getRoutePointsAsync(routeMetaInfo, api).then(
+                            displayRoute,
+                            console.error
+                        )
+                        getBusLocationAsync(busId, api).then(
+                            displayBus,
+                            console.error
+                        )
+                    },
+                    console.error
+                )
+            }
+
+            return {launch}
+        }
+
+        //----------------- GEOTAB -----------------
+
+        function initGeotabApi() {
+            var authentication = {
+                credentials: {
+                    userName: '[USERNAME]',
+                    password: '[PASSWORD]' //TODO: DON'T DO THIS LOL
+                },
+                path: 'https://my.geotab.com'
+            }
+
+            var options = {
+                rememberMe: true
+            }
+
+            return new GeotabApi(authentication, options)
+        }
+
+        function getRouteMetaInfoAsync(routeId, api) {
+            return new Promise((resolve, reject) => {
+                api.call("Get", {
+                        typeName: "Route",
+                        search: {
+                            id: routeId
+                        }
+                    }, result => resolve(result[0].routePlanItemCollection),
+                    error => reject(error));
+            })
+        }
+
+        function getRoutePointsAsync(routeStopMetaInfos, api) {
+            // Stops are called "zones" on Geotab, we want to request the
+            // actual zone location using the ids included in the metainfo
+            var routeStopInfosAPICallParameters = routeStopMetaInfos.Map(metaInfo =>
+                ['Get', {typeName: 'Zone', search: {id: metaInfo.zone.id}}])
+
+            return new Promise((resolve, reject) => {
+
+                api.multiCall(routeStopInfosAPICallParameters, results => {
+
+                        // The zone points are actually the corners of its bounding square.
+                        // Using the top left corner as the location in this demo
+                        // bc I'm too lazy to calculate the center point
+                        var routeStopLocations = results.map(stopInfo => {
+                            return {
+                                x: stopInfo[0].points[0].x,
+                                y: stopInfo[0].points[0].y
+                            }
+                        })
+
+                        resolve(routeStopLocations)
+                    },
+                    error => reject())
+            })
+        }
+
+        function getBusLocationAsync(busId, api) {
+            return new Promise((resolve, reject) => {
+                api.call("Get", {
+                    typeName: "DeviceStatusInfo",
+                    deviceSearch: {
+                        serialNumber: busId
+                    }
+                }, result => {
+                    // Things got down to the wire, we're just grabbing a random
+                    // bus because the id filtering above does not seem to be
+                    // formatted correctly and the call is returning ALL the buses
+                    let busLocation = result[10]
+                    resolve(busLocation)
+                }, error => reject())
+            })
+        }
+
+        //----------------- LEAFLET -----------------
+
+        function initLeafletMapFunctions() {
+            var {map, featureGroup} = initLeafletMap()
+
+            var displayRoute = routePoints => displayRouteOnLeaflet(routePoints, map, featureGroup)
+            var displayBus = busLocation => displayBusLocationOnLeaflet(busLocation, map, featureGroup)
+
+            return {displayRoute, displayBus}
+        }
+
+        function initLeafletMap() {
+            var map = new L.Map("map");
+            L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+                subdomains: ['a', 'b', 'c']
+            }).addTo(map);
+            var featureGroup = L.featureGroup().addTo(map);
+            return {map, featureGroup}
+        }
+
+        function displayRouteOnLeaflet(routePoints, map, featureGroup) {
+            var leafletCoordCollection = routePoints.map(location =>
+                new L.LatLng(location.y, location.x))
+
+            var polyline = L.polyline(leafletCoordCollection, {
+                color: "Blue"
+            });
+
+            featureGroup.clearLayers();
+            featureGroup.addLayer(polyline);
+
+            var points = leafletCoordCollection.map(loc => L.circleMarker(loc))
+            points.forEach(stop => featureGroup.addLayer(stop))
+
+            map.fitBounds(featureGroup.getBounds());
+        }
+
+        function displayBusLocationOnLeaflet(location, map, featureGroup) {
+            var marker = L.marker(L.latLng(location.latitude, location.longitude))
+            featureGroup.addLayer(marker)
+            map.fitBounds(featureGroup.getBounds());
+        }
+    })
+
+</script>
+
+</body>
+</html>
